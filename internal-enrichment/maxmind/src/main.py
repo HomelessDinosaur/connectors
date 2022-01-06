@@ -35,9 +35,10 @@ class MaxmindConnector:
             self.client = self._get_maxmind_client(
                 account_id=account_id, api_key=api_key
             )
+            self.helper.log_debug("Successfully authenticated with Maxmind Client")
         except AuthenticationError:
             raise ValueError(
-                "Unable to authenticate Maxmind client using the provided credentials"
+                "A valid account ID and license key are required to use Maxmind API"
             )
 
     @staticmethod
@@ -49,6 +50,9 @@ class MaxmindConnector:
         entity_id = data.get("entity_id")
         observable = self._get_observable_from_entity_id(entity_id)
         if self._check_observable_contains_ip_address(observable):
+            self.helper.log_debug(
+                f"Observable with ID {entity_id} is contains an IP Address"
+            )
             return self._update_ip_address_observable(observable)
         return "Observable was not an IP Address"
 
@@ -62,12 +66,14 @@ class MaxmindConnector:
             return True
         return False
 
-    # Error wrapper for updating observable location data
     def _update_ip_address_observable(self, observable: Dict) -> str:
         observable_id, ip_address = self._extract_information_from_observable(
             observable, "standard_id", "ip_address"
         )
         try:
+            self.helper.log_debug(
+                f"Observable '{observable_id}' contains IP Address '{ip_address}'"
+            )
             self._update_observable_location_data(observable_id, ip_address)
             return "Observable was successfully tagged with geolocation data"
         except GeoIP2Error:
@@ -83,6 +89,7 @@ class MaxmindConnector:
             observable_id=observable_id, geoip_response=response
         )
         bundles_sent = self.helper.send_stix2_bundle(bundle.serialize())
+        self.helper.log_debug(f"Bundle information sent: {bundle.serialize()}")
         self.helper.log_info(
             f"Sent {str(len(bundles_sent))} stix bundle(s) for worker import"
         )
