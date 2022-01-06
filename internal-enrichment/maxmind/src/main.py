@@ -1,45 +1,89 @@
 import os
+
+import requests
 import yaml
 import time
 import geoip2.webservice
+import geoip2.database
+from geoip2.webservice import Client, City, Country, GeoIP2Error, AuthenticationError
+from geoip2.database import Reader
 from typing import Dict
 from stix2 import Relationship, Location, Bundle
 from pycti import OpenCTIConnectorHelper, OpenCTIStix2Utils, get_config_variable
-from geoip2.webservice import Client, City, Country, GeoIP2Error, AuthenticationError
 
 
 class MaxmindConnector:
     def __init__(self):
         # Instantiate the connector helper from config
         config_file_path = os.path.dirname(os.path.abspath(__file__)) + "/config.yml"
-        config = (
+        self.config = (
             yaml.load(open(config_file_path), Loader=yaml.FullLoader)
             if os.path.isfile(config_file_path)
             else {}
         )
-        self.helper = OpenCTIConnectorHelper(config)
+        self.helper = OpenCTIConnectorHelper(self.config)
+        datasource = get_config_variable(
+            "MAXMIND_DATA_SOURCE",
+            ["maxmind", "maxmind_data_source"],
+            self.config,
+            default=None,
+        )
+        license_key = get_config_variable(
+            "MAXMIND_API_KEY",
+            ["maxmind", "maxmind_license_key"],
+            self.config,
+            default=None,
+        )
+        self.helper.log_debug(f"Datasource in use is {datasource}")
+        try:
+            if datasource == "DATABASE":
+                self._datasource_is_database(license_key)
+            elif datasource == "API":
+                self._datasource_is_api(license_key)
+            else:
+                raise ValueError(
+                    "Maxmind datasource must be either 'API' or 'DATABASE'"
+                )
+        except AuthenticationError as auth_err:
+            raise ValueError(
+                f"Error whilst authenticating Maxmind {datasource.lower()}", auth_err
+            )
+
+    def _datasource_is_database(self, license_key: str):
+        self._download_maxmind_db(license_key)
+        self.helper.log_debug("Successfully downloaded Maxmind DB")
+        self.client = self._get_maxmind_reader()
+
+    @staticmethod
+    def _get_maxmind_reader() -> Reader:
+        with geoip2.database.Reader("/GeoIP2-City.mmdb") as reader:
+            return reader
+
+    @staticmethod
+    def _download_maxmind_db(license_key: str) -> None:
+        url = f"https://download.maxmind.com/app/geoip_download"
+        params = {
+            "edition_id": "GeoIP2-City",
+            "suffix": "mmdb",
+            "license_key": license_key,
+        }
+        requests.get(url=url, params=params)
+
+    def _datasource_is_api(self, license_key: str):
+        if license_key is None:
+            raise ValueError("Api Key must be provided when using Maxmind Api")
         account_id = get_config_variable(
             "MAXMIND_ACCOUNT_ID",
             ["maxmind", "maxmind_account_id"],
-            config,
+            self.config,
             default=None,
         )
         if account_id is None:
-            raise ValueError("Account ID must be provided")
-        api_key = get_config_variable(
-            "MAXMIND_API_KEY", ["maxmind", "maxmind_api_key"], config, default=None
+            raise ValueError("Account ID must be provided when using Maxmind Api")
+        self.client = self._get_maxmind_client(
+            account_id=account_id, api_key=license_key
         )
-        if api_key is None:
-            raise ValueError("API Key must be provided")
-        try:
-            self.client = self._get_maxmind_client(
-                account_id=account_id, api_key=api_key
-            )
-            self.helper.log_debug("Successfully authenticated with Maxmind Client")
-        except AuthenticationError:
-            raise ValueError(
-                "A valid account ID and license key are required to use Maxmind API"
-            )
+        self.helper.log_debug("Successfully authenticated with Maxmind Api")
 
     @staticmethod
     def _get_maxmind_client(account_id: int, api_key: str) -> Client:
