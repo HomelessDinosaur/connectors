@@ -56,7 +56,7 @@ class MaxmindConnector:
 
     @staticmethod
     def _get_maxmind_reader() -> Reader:
-        with geoip2.database.Reader("/GeoIP2-City.mmdb") as reader:
+        with geoip2.database.Reader("/opt/opencti-connector-maxmind/GeoIP2-City.mmdb") as reader:
             return reader
 
     @staticmethod
